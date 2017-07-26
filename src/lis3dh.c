@@ -7,6 +7,13 @@
 #define LOW 0
 
 #define ACCEL 0x19 /* Address of LIS3DH Accelerometer */
+#define WHO_AM_I 0x0f /* Address of id register */
+#define CTRL_REG1 0x20 /* Address of enable/disable register */
+
+/* Acceleration value registers */
+#define REG_X 0x28
+#define REG_Y 0x2A
+#define REG_Z 0x2C
 
 #define I2C_MASTER_SCL_IO  GPIO_NUM_22 /*!< gpio number for I2C master clock */
 #define I2C_MASTER_SDA_IO  GPIO_NUM_21 /*!< gpio number for I2C master data  */
@@ -71,8 +78,21 @@ esp_err_t write_byte(uint8_t value)
  */
 esp_err_t write_reg(uint8_t reg_addr, uint8_t value)
 {
-    write_byte(reg_addr);
-    return write_byte(value);
+   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+   i2c_master_start(cmd);
+   i2c_master_write_byte(cmd, (ACCEL << 1) | WRITE_BIT, ACK_CHECK_EN);
+   i2c_master_write_byte(cmd, reg_addr, ACK_CHECK_DIS);
+   i2c_master_write_byte(cmd, value, ACK_CHECK_DIS);
+   i2c_master_stop(cmd);
+   esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+   i2c_cmd_link_delete(cmd);
+   // ESP_ERROR_CHECK(ret);
+   if (ret != ESP_OK) {
+     printf("Error writing i2c byte %02x. Ret: %d\n", value, ret);
+   } else {
+     printf("Successfully wrote i2c byte %02x. Ret: %d\n", value, ret);
+   }
+   return ret;
 }
 
 /**
@@ -110,21 +130,11 @@ uint8_t read_reg(uint8_t reg_addr)
   return res;
 }
 
-
-
-void loop(void *pvParameter) {
-  while (1) {
-    uint8_t id = read_reg(0x0F); //Read the WHO_AM_I register
-    printf("i2c id: %d\n", id);
-    fflush(stdout);
-
-    gpio_set_level(LED_PIN, HIGH);
-    vTaskDelay(500);
-    gpio_set_level(LED_PIN, LOW);
-    vTaskDelay(500);
-  }
+int16_t read16Reg(uint8_t addr) {
+  uint8_t low = read_reg(addr);
+  uint8_t high = read_reg(addr+1);
+  return (high << 8) | low;
 }
-
 
 void app_main()
 {
@@ -133,5 +143,15 @@ void app_main()
   printf("Accelerometer enabled\n");
   fflush(stdout);
 
-  xTaskCreate(&loop, "loop", 2048, NULL, 5, NULL);
+  uint8_t id = read_reg(WHO_AM_I); //Read the WHO_AM_I register
+  printf("i2c id 2: %d\n", id);
+
+  printf("Writing CTRL_REG1\n");
+  write_reg(CTRL_REG1, 0x47); //Set data rate to 50hz. Enable X, Y and Z axes
+
+  int16_t x = read16Reg(REG_X);
+  int16_t y = read16Reg(REG_Y);
+  int16_t z = read16Reg(REG_Z);
+
+  printf("Read: %d, %d, %d\n", x, y, z);
 }
